@@ -9,6 +9,8 @@ import logging
 import shlex
 import sys
 import time
+import threading
+import asyncio
 
 from collections import OrderedDict
 
@@ -17,11 +19,13 @@ try:
 except ImportError:
     import ConfigParser as configparser
 
-import liblo
 import paho.mqtt.client as mqtt
 
 from .converter import Osc2MqttConverter, ConversionRule
 from .util import as_bool, parse_hostport, parse_list
+from pythonosc.dispatcher import Dispatcher
+from pythonosc.osc_server import ThreadingOSCUDPServer
+from pythonosc.udp_client import SimpleUDPClient
 
 
 log = logging.getLogger('osc2mqtt')
@@ -78,21 +82,30 @@ class Osc2MqttBridge(object):
         self.config = config
         self.mqtt_host, self.mqtt_port = parse_hostport(
             config.get("mqtt_broker", "localhost"), 1883)
+        self.mqtt_username = config.get("mqtt_username")
+        self.mqtt_password = config.get("mqtt_password")
         self.osc_port = int(config.get("osc_port", 9001))
         self.osc_receiver = config.get("osc_receiver")
         self.subscriptions = config.get("subscriptions", ['#'])
 
         if self.osc_receiver:
             host, port = parse_hostport(self.osc_receiver, 9000)
-            self.osc_receiver = liblo.Address(host, port, liblo.UDP)
+            self.oscclient = SimpleUDPClient(host, port)
 
-        self.mqttclient = mqtt.Client(config.get("client_id", "osc2mqtt"))
+        self.mqttclient = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, config.get("client_id", "osc2mqtt"))
         self.mqttclient.on_connect = self.mqtt_connect
         self.mqttclient.on_disconnect = self.mqtt_disconnect
         self.mqttclient.on_message = self.handle_mqtt
 
-        self.oscserver = liblo.ServerThread(self.osc_port)
-        self.oscserver.add_method(None, None, self.handle_osc)
+        if self.mqtt_username and not self.mqtt_password:
+            self.mqttclient.username = self.mqtt_username
+        
+        if self.mqtt_username and self.mqtt_password:
+            self.mqttclient.username_pw_set(username=self.mqtt_username, password=self.mqtt_password)
+
+        dispatcher = Dispatcher()
+        dispatcher.set_default_handler(self.handle_osc)
+        self.oscserver = ThreadingOSCUDPServer(("127.0.0.1", self.osc_port), dispatcher, asyncio.new_event_loop())
 
     def start(self):
         """Start MQTT client and OSC listener."""
@@ -104,12 +117,10 @@ class Osc2MqttBridge(object):
         self.mqttclient.loop_start()
 
         log.info("Starting OSC server listening on port %s ...", self.osc_port)
-        self.oscserver.start()
+        threading.Thread(target=lambda: self.oscserver.serve_forever(2),daemon=True).start()
 
     def stop(self):
         """Method docstring."""
-        log.info("Stopping OSC server ...")
-        self.oscserver.stop()
         log.debug("Stopping MQTT thread ...")
         self.mqttclient.loop_stop()
         log.info("Disconnecting from MQTT broker ...")
@@ -129,13 +140,13 @@ class Osc2MqttBridge(object):
         if res:
             if self.osc_receiver:
                 log.debug("OSC send: %s %r", *res)
-                self.oscserver.send(self.osc_receiver, res[0], *res[1])
+                self.oscclient.send_message(res[0], *res[1])
         else:
             log.debug("No rule match for MQTT topic '%s'.", msg.topic)
 
-    def handle_osc(self, oscaddr, values, tags, clientaddr, userdata):
-        log.debug("OSC recv: %s %r", oscaddr, values)
-        res = self.converter.from_osc(oscaddr, values, tags)
+    def handle_osc(self, oscaddr, *oscdata):
+        log.debug("OSC recv: %s %r", oscaddr, list(oscdata))
+        res = self.converter.from_osc(oscaddr, list(oscdata))
         if res:
             log.debug("MQTT publish: %s %r", *res)
             self.mqttclient.publish(*res)

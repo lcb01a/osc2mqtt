@@ -180,7 +180,7 @@ class Osc2MqttConverter(object):
 
         return values
 
-    def from_osc(self, addr, values, tags):
+    def from_osc(self, addr, values):
         """Convert OSC message to MQTT.
 
         Since OSC messages always specify the types of their values, only the
