@@ -1,7 +1,7 @@
 osc2mqtt
 ########
 
-An OSC_ to MQTT_ bridge based on pyliblo_ and `paho-mqtt`_.
+An OSC_ to MQTT_ bridge based on python-osc_ and `paho-mqtt`_.
 
 Quick Start
 -----------
@@ -22,5 +22,5 @@ Quick Start
 .. _osc: http://opensoundcontrol.org/
 .. _mqtt: http://mqtt.org/
 .. _paho-mqtt: https://www.eclipse.org/paho/clients/python/
-.. _pyliblo: http://das.nasophon.de/pyliblo/
+.. _python-osc: https://pypi.org/project/python-osc/
 .. _osc2mqtt.ini: https://github.com/SpotlightKid/osc2mqtt/blob/master/osc2mqtt.ini
